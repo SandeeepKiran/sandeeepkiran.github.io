@@ -1,0 +1,60 @@
+# Builds https://sandeeepkiran.github.io/ from the Mousy-Portfolio repo:
+#   /           -> the Mousy-Portfolio branch named in THIS repo's live.txt
+#   /<branch>/  -> every Mousy-Portfolio design branch (short links like /david/)
+#
+# Runs when you edit live.txt (any push to main), every hour (to pick up pushes to
+# Mousy-Portfolio), and on the "Run workflow" button in the Actions tab.
+name: Deploy from Mousy-Portfolio
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 * * * *"   # every hour, at minute 17
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write   # only for the keep-alive step below
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6   # for live.txt
+
+      - name: Download every Mousy-Portfolio branch
+        run: git clone --quiet --no-checkout https://github.com/SandeeepKiran/Mousy-Portfolio.git "$RUNNER_TEMP/mousy"
+
+      # The build script lives in Mousy-Portfolio's main branch, so both sites share one copy.
+      - name: Build the site
+        run: |
+          git -C "$RUNNER_TEMP/mousy" show origin/main:.github/build-site.sh > "$RUNNER_TEMP/build-site.sh"
+          bash "$RUNNER_TEMP/build-site.sh" "$RUNNER_TEMP/mousy" "$RUNNER_TEMP/site" "$(cat live.txt)"
+
+      # GitHub pauses hourly schedules in public repos after 60 days without commits.
+      # Re-enabling the workflow on every run keeps this quiet repo's schedule alive.
+      - name: Keep the hourly schedule alive
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/deploy.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ runner.temp }}/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
